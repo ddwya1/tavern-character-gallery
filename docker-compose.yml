@@ -1,0 +1,15 @@
+services:
+  tavern-character-gallery:
+    build: .
+    container_name: tavern-character-gallery
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3829
+    ports:
+      - "3829:3829"
+    volumes:
+      - ./data:/app/data
+      # 把下面这一行左侧改成你的 SillyTavern 目录。
+      # 容器内的 /app/tavern 会被自动扫描，导入角色卡会写入它的 characters 目录。
+      - /path/to/SillyTavern:/app/tavern

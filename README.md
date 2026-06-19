@@ -102,7 +102,7 @@ PORT=3829 HOST=0.0.0.0 npm run start
 
 ## 部署教程
 
-更详细的 PC、手机 Termux、VPS 部署步骤见 [docs/deployment.md](docs/deployment.md)。
+更详细的 PC、手机 Termux、服务器 Docker 部署步骤见 [docs/deployment.md](docs/deployment.md)。
 
 ## 注意事项
 
@@ -110,4 +110,3 @@ PORT=3829 HOST=0.0.0.0 npm run start
 - 导入同名文件时会自动重命名，不会直接覆盖原文件。
 - 如果没有扫描到酒馆，可以在连接弹窗里刷新扫描，或者把项目放在离 SillyTavern 更近的目录再试。
 - 服务器部署时不要把整个 SillyTavern 目录公开到公网。只把这个工具通过反代暴露出去，也建议加访问限制。
-

@@ -1,6 +1,6 @@
 # 部署教程
 
-这份文档按实际使用场景写：电脑本地跑、手机 Termux 跑、VPS 跑。
+这份文档按实际使用场景写：电脑本地跑、手机 Termux 跑、服务器用 Docker 跑。
 
 ## 1. PC 本地运行
 
@@ -106,34 +106,69 @@ termux-setup-storage
 /storage/emulated/0
 ```
 
-## 3. VPS 部署
+## 3. 服务器 Docker 部署
 
-VPS 更适合远程整理卡库。注意：如果 SillyTavern 不在同一台服务器上，这个项目只能扫描服务器本机的目录，不能直接扫描你电脑里的酒馆。
+服务器上推荐用 Docker 跑。这样不用在宿主机上单独装 Node、pm2，也方便以后更新。
 
-### 安装
+下面以 Ubuntu / Debian 为例。
 
-以 Ubuntu / Debian 为例：
+### 安装 Docker
 
 ```bash
 sudo apt update
-sudo apt install -y git curl
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs
+sudo apt install -y docker.io docker-compose-plugin git
+sudo systemctl enable --now docker
 ```
 
-拉代码并安装：
+如果当前用户不想每次都写 `sudo`，可以加入 docker 组：
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+退出 SSH 后重新登录生效。
+
+### 拉取项目
 
 ```bash
 git clone <你的仓库地址>
 cd tavern-character-gallery
-npm ci
-npm run build
 ```
 
-启动：
+### 挂载 SillyTavern 目录
+
+打开 `docker-compose.yml`，把这一行左侧改成你服务器上的 SillyTavern 目录：
+
+```yaml
+- /path/to/SillyTavern:/app/tavern
+```
+
+例如你的酒馆在 `/opt/SillyTavern`：
+
+```yaml
+- /opt/SillyTavern:/app/tavern
+```
+
+容器会扫描 `/app/tavern`，也会把导入的角色卡写入这个目录下的 `characters` 文件夹。  
+如果只想预览不想写入，可以把挂载改成只读：
+
+```yaml
+- /opt/SillyTavern:/app/tavern:ro
+```
+
+只读模式下不要使用导入、删除、另存这些会写文件的操作。
+
+### 启动
 
 ```bash
-HOST=0.0.0.0 PORT=3829 npm run start
+docker compose up -d --build
+```
+
+查看状态：
+
+```bash
+docker compose ps
+docker compose logs -f
 ```
 
 浏览器访问：
@@ -142,25 +177,22 @@ HOST=0.0.0.0 PORT=3829 npm run start
 http://服务器IP:3829
 ```
 
-### 用 pm2 常驻
+### 更新
 
 ```bash
-sudo npm install -g pm2
-HOST=0.0.0.0 PORT=3829 pm2 start server/index.js --name tavern-character-gallery
-pm2 save
-pm2 startup
+git pull
+docker compose up -d --build
 ```
 
-查看状态：
+### 停止
 
 ```bash
-pm2 status
-pm2 logs tavern-character-gallery
+docker compose down
 ```
 
 ### Nginx 反向代理
 
-示例配置：
+如果要绑定域名，可以让 Nginx 反代到容器暴露的 `3829` 端口：
 
 ```nginx
 server {
@@ -185,28 +217,14 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-公网部署建议再加一层访问控制，比如 Nginx Basic Auth、VPN、内网穿透鉴权，或者只绑定到内网地址。
+公网部署建议加访问控制，比如 Nginx Basic Auth、VPN、内网穿透鉴权，或者只绑定到内网地址。不要把整个 SillyTavern 目录直接暴露到公网。
 
-## 4. 更新项目
-
-```bash
-git pull
-npm install
-npm run build
-```
-
-如果用 pm2：
-
-```bash
-pm2 restart tavern-character-gallery
-```
-
-## 5. 常见问题
+## 4. 常见问题
 
 ### 页面能打开，但扫描不到酒馆
 
 确认 SillyTavern 目录里有 `characters` 文件夹。  
-如果酒馆在外接盘、云盘或奇怪目录里，自动扫描可能找不到，建议把项目放到和 SillyTavern 更近的位置运行。
+Docker 部署时重点检查 `docker-compose.yml` 里的挂载路径，宿主机路径必须是真实存在的 SillyTavern 根目录。
 
 ### 角色卡封面不显示
 
@@ -216,7 +234,7 @@ pm2 restart tavern-character-gallery
 ### 导入失败
 
 检查后端是否有写入 `characters` 目录的权限。  
-Windows 可以尝试用普通用户目录运行；Linux / VPS 注意不要把酒馆目录放到当前用户无权写入的位置。
+Docker 部署时，如果挂载目录属于其他用户，可能需要调整宿主机目录权限，或者先确认没有使用 `:ro` 只读挂载。
 
 ### 手机上访问电脑服务
 
@@ -233,4 +251,3 @@ http://电脑局域网IP:3829
 ```
 
 Windows 防火墙如果拦截 Node.js，需要允许它通过专用网络。
-
