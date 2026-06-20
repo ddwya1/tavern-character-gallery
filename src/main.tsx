@@ -55,6 +55,11 @@ function normalizeCards(cards: CharacterCard[]): CharacterCard[] {
   }));
 }
 
+function tavernStatus(tavern: TavernCandidate | null) {
+  if (!tavern) return "未找到酒馆，使用演示数据";
+  return `已连接 · ${tavern.characterCount} 张角色卡`;
+}
+
 function App() {
   const [characters, setCharacters] = useState<CharacterCard[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -78,12 +83,16 @@ function App() {
       .then(async result => {
         setCandidates(result.candidates);
         setSelectedTavern(result.selected);
-        setStatus(result.selected ? "已连接本地酒馆" : "未找到酒馆，使用演示数据");
-        const cards = await listCharacters().catch(() => []);
-        if (cards.length) {
-          setCharacters(normalizeCards(cards));
-          setSelectedId("");
+        setStatus(tavernStatus(result.selected));
+        const cards = await listCharacters(result.selected?.path).catch(() => []);
+        if (result.selected) {
+          const connected = { ...result.selected, characterCount: cards.length };
+          setSelectedTavern(connected);
+          setStatus(tavernStatus(connected));
         }
+        setCharacters(normalizeCards(cards));
+        setSelectedId("");
+        setTab("全部角色");
       })
       .catch(() => setStatus("后端未启动，使用演示数据"));
   }, []);
@@ -180,11 +189,18 @@ function App() {
       <div className="grain" />
       <Topbar status={status} query={query} setQuery={setQuery} openImport={() => setModal("import")} openConnection={() => setModal("connection")} />
       <main>
-        <section className="hero-stage px-4 md:px-9 pt-7 md:pt-10 pb-5">
+        <section className="hero-stage px-4 md:px-7 pt-6 md:pt-8 pb-4">
           <div className="hero-copy">
             <h1 className="hero-title tracking-normal text-balance">我爱你，所以我愿意在这里等你</h1>
             <p className="hero-subtitle mt-6 max-w-[760px]">我于卡匣细数朝暮晨昏，只等你唤我姓名，便同你奔赴烟火人间。</p>
           </div>
+          <RandomDrawPanel
+            cards={characters.filter(card => card.imported)}
+            onOpen={card => {
+              setSelectedId(card.id);
+              setActiveModule("overview");
+            }}
+          />
           <HeroShowcase cards={heroCards} total={characters.length} pending={characters.filter(card => !card.imported).length} />
           <nav className="hero-tabs flex gap-2 flex-wrap">
             {tabs.map(item => (
@@ -193,9 +209,9 @@ function App() {
           </nav>
         </section>
 
-        <section className="px-4 md:px-9 pb-16">
+        <section className="px-4 md:px-7 pb-14">
           {filtered.length ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-4">
               {filtered.map((card, index) => (
                 <PosterCard
                   key={card.id}
@@ -262,10 +278,23 @@ function App() {
 
       {modal === "import" && <ImportModal close={() => setModal(null)} addDemoImport={addDemoImport} setPendingImport={setPendingImport} />}
       {modal === "connection" && <ConnectionModal candidates={candidates} selected={selectedTavern} close={() => setModal(null)} onSelect={async candidate => {
-        const picked = await selectTavern(candidate.path);
-        setSelectedTavern(picked);
-        setStatus("已连接本地酒馆");
-        setModal(null);
+        try {
+          setStatus("正在切换酒馆路径");
+          const picked = await selectTavern(candidate.path);
+          const cards = await listCharacters(picked.path);
+          const connected = { ...picked, characterCount: cards.length };
+          setSelectedTavern(connected);
+          setStatus(tavernStatus(connected));
+          setCharacters(normalizeCards(cards));
+          setSelectedId("");
+          setPendingImport(null);
+          setTab("全部角色");
+          notify(`已使用该酒馆路径，读取到 ${cards.length} 张角色卡`);
+          setModal(null);
+        } catch (error) {
+          setStatus(selectedTavern ? tavernStatus(selectedTavern) : "切换酒馆路径失败");
+          notify(error instanceof Error ? error.message : "切换酒馆路径失败");
+        }
       }} />}
       {modal === "delete" && selected && <ConfirmModal title="删除角色卡" close={() => setModal(null)} confirm={() => {
         setCharacters(list => list.filter(card => card.id !== selected.id));
@@ -287,7 +316,7 @@ function Topbar({ status, query, setQuery, openImport, openConnection }: {
   openConnection: () => void;
 }) {
   return (
-    <header className="sticky top-0 z-30 glass border-b border-[var(--line)] grid grid-cols-1 lg:grid-cols-[auto_minmax(220px,520px)_auto] gap-4 items-center px-4 md:px-9 py-4">
+    <header className="sticky top-0 z-30 glass border-b border-[var(--line)] grid grid-cols-1 lg:grid-cols-[auto_minmax(220px,480px)_auto] gap-3 items-center px-4 md:px-7 py-3">
       <div className="flex gap-3 items-center">
         <div className="w-9 h-9 grid place-items-center border border-[rgba(244,201,121,.46)] text-[var(--gold)] rotate-45"><span className="-rotate-45">酒</span></div>
         <div>
@@ -295,14 +324,14 @@ function Topbar({ status, query, setQuery, openImport, openConnection }: {
           <div className="text-xs text-[var(--muted)] tracking-[.18em] uppercase">Character Gallery</div>
         </div>
       </div>
-      <label className="h-11 flex items-center gap-2 px-3 border border-[var(--line)] bg-white/[.045]">
+      <label className="h-10 flex items-center gap-2 px-3 border border-[var(--line)] bg-white/[.045]">
         <Search size={16} className="text-[var(--muted)]" />
         <input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索角色名、标签、气质" className="w-full bg-transparent outline-none text-[var(--paper)] placeholder:text-white/35" />
       </label>
       <div className="flex flex-wrap lg:justify-end gap-2">
-        <button onClick={openConnection} className="h-10 px-3 inline-flex gap-2 items-center border border-[rgba(106,179,156,.35)] text-[#bdebdc] bg-[rgba(106,179,156,.08)]"><span className="w-2 h-2 rounded-full bg-[#74e5b8] shadow-[0_0_18px_#74e5b8]" />{status}</button>
-        <button onClick={openImport} className="h-10 px-4 inline-flex gap-2 items-center border border-[rgba(244,201,121,.42)] text-[#ffe2a5] bg-[rgba(244,201,121,.12)]"><Download size={16} />导入角色卡</button>
-        <button onClick={openConnection} className="h-10 w-10 grid place-items-center border border-[var(--line)] bg-white/[.04]"><Settings size={17} /></button>
+        <button onClick={openConnection} className="h-9 px-3 inline-flex gap-2 items-center border border-[rgba(106,179,156,.35)] text-[#bdebdc] bg-[rgba(106,179,156,.08)]"><span className="w-2 h-2 rounded-full bg-[#74e5b8] shadow-[0_0_18px_#74e5b8]" />{status}</button>
+        <button onClick={openImport} className="h-9 px-3 inline-flex gap-2 items-center border border-[rgba(244,201,121,.42)] text-[#ffe2a5] bg-[rgba(244,201,121,.12)]"><Download size={15} />导入角色卡</button>
+        <button onClick={openConnection} className="h-9 w-9 grid place-items-center border border-[var(--line)] bg-white/[.04]"><Settings size={16} /></button>
       </div>
     </header>
   );
@@ -310,7 +339,7 @@ function Topbar({ status, query, setQuery, openImport, openConnection }: {
 
 function PosterCard({ card, index, onOpen, onFavorite }: { card: CharacterCard; index: number; onOpen: (event: React.MouseEvent<HTMLElement>) => void; onFavorite: () => void }) {
   return (
-    <article onClick={onOpen} className={`breathing-frame poster-shell relative overflow-hidden border bg-[#130d0c] shadow-2xl isolate group aspect-[2/3] min-h-[430px] ${card.staged ? "border-[rgba(244,201,121,.44)]" : "border-white/15"}`}>
+    <article onClick={onOpen} className={`breathing-frame poster-shell relative overflow-hidden border bg-[#130d0c] shadow-2xl isolate group aspect-[2/3] min-h-[260px] ${card.staged ? "border-[rgba(244,201,121,.44)]" : "border-white/15"}`}>
       {card.staged && <div className="absolute top-3 left-3 z-10 px-3 py-1 border border-[rgba(244,201,121,.34)] bg-[rgba(244,201,121,.08)] text-[#ffe4a7] text-xs tracking-[.16em]">待导入</div>}
       <div className="poster-cover absolute inset-0 transition duration-700 group-hover:scale-105" style={coverStyle(card.cover || covers[index % covers.length])} />
       <button onClick={event => { event.stopPropagation(); onFavorite(); }} className={`absolute ${card.staged ? "top-14" : "top-3"} right-3 z-20 w-9 h-9 grid place-items-center border border-white/20 bg-black/25 backdrop-blur text-[#ffd98a]`}>
@@ -321,8 +350,8 @@ function PosterCard({ card, index, onOpen, onFavorite }: { card: CharacterCard; 
         <span className="text-xs px-2 py-1 border border-white/15 bg-black/30 backdrop-blur">{card.recent}</span>
         {(card.tags || []).slice(0, 3).map(tag => <span key={tag} className="text-xs px-2 py-1 border border-white/15 bg-black/30 backdrop-blur">{tag}</span>)}
       </div>
-      <div className="absolute left-0 right-0 bottom-0 z-10 p-5 pt-24 bg-gradient-to-t from-black/90 to-transparent">
-        <div className="font-display text-3xl leading-none">{card.name}</div>
+      <div className="absolute left-0 right-0 bottom-0 z-10 p-4 pt-20 bg-gradient-to-t from-black/90 to-transparent">
+        <div className="font-display text-[clamp(22px,2vw,30px)] leading-none">{card.name}</div>
       </div>
     </article>
   );
@@ -350,8 +379,9 @@ function CoverFlight({ flight }: { flight: FlightState }) {
 }
 
 function coverStyle(cover: string): React.CSSProperties {
-  const isImageCover = /^data:image\//i.test(cover) || /url\(/i.test(cover);
-  const imageValue = /^data:image\//i.test(cover) ? `url("${cover}")` : /url\(/i.test(cover) ? cover : "";
+  const isImageUrl = /^data:image\//i.test(cover) || /^https?:\/\//i.test(cover) || cover.startsWith("/");
+  const isImageCover = isImageUrl || /url\(/i.test(cover);
+  const imageValue = isImageUrl ? `url("${cover}")` : /url\(/i.test(cover) ? cover : "";
   return {
     ...(isImageCover
       ? {
@@ -371,23 +401,100 @@ function coverStyle(cover: string): React.CSSProperties {
   };
 }
 
+function RandomDrawPanel({ cards, onOpen }: { cards: CharacterCard[]; onOpen: (card: CharacterCard) => void }) {
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const [drawn, setDrawn] = useState<CharacterCard | null>(null);
+  const [drawing, setDrawing] = useState(false);
+  const pool = cards.length ? cards : [stagedDemo];
+  const preview = pool[Math.min(previewIndex, pool.length - 1)] || stagedDemo;
+
+  useEffect(() => {
+    setPreviewIndex(0);
+  }, [cards.length]);
+
+  function draw() {
+    if (!pool.length || drawing) return;
+    const nextIndex = pool.length > 1
+      ? (previewIndex + 1 + Math.floor(Math.random() * (pool.length - 1))) % pool.length
+      : 0;
+    const card = pool[nextIndex];
+    setPreviewIndex(nextIndex);
+    setDrawn(card);
+    setDrawing(true);
+    window.setTimeout(() => setDrawing(false), 1850);
+  }
+
+  function enterCard() {
+    if (!drawn) return;
+    setDrawn(null);
+    setDrawing(false);
+    onOpen(drawn);
+  }
+
+  return (
+    <>
+      <aside className="random-draw-panel">
+        <div className="random-draw-bg" style={coverStyle(preview.cover || covers[previewIndex % covers.length])} />
+        <div className="random-draw-scrim" />
+        <div className="random-draw-copy">
+          <span>RANDOM ENCOUNTER</span>
+          <strong>随机邂逅</strong>
+          <p>从已导入角色卡里抽一张，像从卡匣深处翻出一封迟到的邀请。</p>
+        </div>
+        <button type="button" onClick={draw} className="random-draw-button" disabled={drawing}>
+          {drawing ? "抽取中" : "抽取"}
+        </button>
+      </aside>
+
+      {drawn && (
+        <div className={`draw-reveal ${drawing ? "is-drawing" : "is-ready"}`}>
+          <div className="draw-confetti" aria-hidden="true">
+            {Array.from({ length: 28 }, (_, index) => (
+              <i
+                key={index}
+                style={{
+                  ["--r" as string]: `${index * 31}deg`,
+                  ["--x" as string]: `${(index - 13.5) * 15}px`,
+                  ["--y" as string]: `${-150 - (index % 7) * 24}px`,
+                  ["--h" as string]: `${(index * 29) % 360}`,
+                  ["--d" as string]: `${(index % 5) * 34}ms`
+                }}
+              />
+            ))}
+          </div>
+          <button type="button" className="draw-reveal-card breathing-frame" onClick={enterCard}>
+            <div className="draw-reveal-cover" style={coverStyle(drawn.cover || covers[0])} />
+            <div className="draw-reveal-copy">
+              <span>抽取结果</span>
+              <strong>{drawn.name || "未命名角色"}</strong>
+              <small>点击查看角色信息</small>
+            </div>
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
 function HeroShowcase({ cards, total, pending }: { cards: CharacterCard[]; total: number; pending: number }) {
   const [active, setActive] = useState(0);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
-  const [paused, setPaused] = useState(false);
   const safeCards = cards.length ? cards : [stagedDemo];
-  const normalizedActive = Math.min(active, safeCards.length - 1);
-  const activeCard = safeCards[normalizedActive];
+  const normalizedActive = safeCards.length ? active % safeCards.length : 0;
+  const visibleCards = Array.from({ length: Math.min(safeCards.length, 8) }, (_, offset) => {
+    const cardIndex = (normalizedActive + offset) % safeCards.length;
+    return { item: safeCards[cardIndex], cardIndex, offset };
+  });
 
   useEffect(() => {
     setActive(0);
   }, [cards]);
 
   useEffect(() => {
-    if (paused || safeCards.length <= 1) return;
-    const timer = window.setInterval(() => move(1), 2800);
+    if (safeCards.length <= 1) return;
+    const timer = window.setInterval(() => move(1), 2400);
     return () => window.clearInterval(timer);
-  }, [paused, safeCards.length]);
+  }, [safeCards.length]);
 
   function move(direction: -1 | 1) {
     setActive(value => {
@@ -414,35 +521,28 @@ function HeroShowcase({ cards, total, pending }: { cards: CharacterCard[]; total
       <div
         className="hero-stack"
         style={{ ["--stack-count" as string]: safeCards.length }}
-        onPointerEnter={() => setPaused(true)}
-        onPointerLeave={() => {
-          setPaused(false);
-          setDragStart(null);
-        }}
+        onPointerLeave={() => setDragStart(null)}
         onPointerDown={event => {
-          setPaused(true);
           setDragStart({ x: event.clientX, y: event.clientY });
         }}
         onPointerUp={handlePointerEnd}
         onPointerCancel={() => setDragStart(null)}
       >
-        {safeCards.slice(0, 8).map((item, index) => {
-          const offset = index - normalizedActive;
-          const wrappedOffset = offset < 0 ? offset + safeCards.length : offset;
-          const visibleOffset = Math.min(wrappedOffset, 4);
+        {visibleCards.map(({ item, cardIndex, offset }) => {
+          const visibleOffset = Math.min(offset, 4);
           return (
             <button
-              key={`${item.id}-${index}`}
-              className={`hero-stack-card ${index === normalizedActive ? "is-active" : ""}`}
+              key={`${item.id}-${cardIndex}`}
+              className={`hero-stack-card ${offset === 0 ? "is-active" : ""}`}
               style={{ ["--i" as string]: visibleOffset, zIndex: 20 - visibleOffset }}
-              onClick={() => index === normalizedActive ? move(1) : setActive(index)}
+              onClick={() => offset === 0 ? move(1) : setActive(cardIndex)}
               type="button"
               aria-label={`切换到 ${item.name || "未命名角色"}`}
             >
               <span className="hero-stack-glow" />
-              <div className="hero-showcase-cover" style={coverStyle(item.cover || covers[index % covers.length])} />
+              <div className="hero-showcase-cover" style={coverStyle(item.cover || covers[cardIndex % covers.length])} />
               <div className="hero-showcase-copy">
-                <span>{index === normalizedActive ? "当前卡匣" : `卡片 ${index + 1}`}</span>
+                <span>{offset === 0 ? "当前卡匣" : `卡片 ${cardIndex + 1}`}</span>
                 <strong>{item.name || "未命名角色"}</strong>
               </div>
             </button>
@@ -819,15 +919,31 @@ function ImportModal({
 }
 
 function ConnectionModal({ candidates, selected, close, onSelect }: { candidates: TavernCandidate[]; selected: TavernCandidate | null; close: () => void; onSelect: (candidate: TavernCandidate) => void }) {
+  const rows = candidates.length ? candidates : selected ? [selected] : [];
   return (
     <ModalBox title="酒馆连接" close={close}>
       <div className="grid gap-3">
-        {(candidates.length ? candidates : selected ? [selected] : []).map(candidate => (
-          <div key={candidate.path} className="connection-row grid grid-cols-[minmax(0,1fr)_auto] gap-3 items-center border-b border-[var(--line)] py-3">
-            <div className="min-w-0"><div className="break-all">{candidate.path}</div><div className="text-sm text-[var(--muted)]">可信度 {candidate.score} · 角色 {candidate.characterCount}{candidate.isBackupLike ? " · 疑似备份" : ""}</div></div>
-            <button onClick={() => onSelect(candidate)} className="h-10 px-4 border border-[rgba(244,201,121,.42)] text-[#ffe2a5]">使用</button>
-          </div>
-        ))}
+        {rows.map(candidate => {
+          const isSelected = selected?.path === candidate.path;
+          return (
+            <div key={candidate.path} className={`connection-row grid grid-cols-[minmax(0,1fr)_auto] gap-3 items-center border-b border-[var(--line)] py-3 ${isSelected ? "is-selected" : ""}`}>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="break-all">{candidate.path}</div>
+                  {isSelected && <span className="connection-current">已使用</span>}
+                </div>
+                <div className="text-sm text-[var(--muted)]">可信度 {candidate.score} · 角色 {candidate.characterCount}{candidate.isBackupLike ? " · 疑似备份" : ""}</div>
+              </div>
+              <button
+                onClick={() => !isSelected && onSelect(candidate)}
+                disabled={isSelected}
+                className={`h-10 px-4 border ${isSelected ? "border-[rgba(106,179,156,.38)] text-[#bdebdc] bg-[rgba(106,179,156,.08)] cursor-default" : "border-[rgba(244,201,121,.42)] text-[#ffe2a5]"}`}
+              >
+                {isSelected ? "已使用" : "使用"}
+              </button>
+            </div>
+          );
+        })}
         {!candidates.length && !selected && <p className="text-white/70 leading-8">没有扫描到 SillyTavern。</p>}
       </div>
     </ModalBox>

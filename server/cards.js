@@ -77,15 +77,14 @@ function normalizeCard(raw, filePath = "") {
   return normalized;
 }
 
-function fileCover(filePath, buffer) {
+function encodedPath(filePath) {
+  return Buffer.from(filePath, "utf8").toString("base64url");
+}
+
+function fileCover(filePath) {
   const ext = path.extname(filePath).toLowerCase();
-  if (ext === ".png") {
-    return `data:image/png;base64,${buffer.toString("base64")}`;
-  }
-  if (ext === ".webp") {
-    return `data:image/webp;base64,${buffer.toString("base64")}`;
-  }
-  return "";
+  if (![".png", ".webp"].includes(ext)) return "";
+  return `/api/characters/cover/${encodedPath(filePath)}`;
 }
 
 function parsePngCard(buffer, filePath) {
@@ -104,7 +103,7 @@ function parsePngCard(buffer, filePath) {
       try {
         const parsed = JSON.parse(attempt());
         if (decoded.keyword === "ccv3") {
-          return { ...normalizeCard(parsed, filePath), cover: fileCover(filePath, buffer) };
+          return { ...normalizeCard(parsed, filePath), cover: fileCover(filePath) };
         }
         if (!legacyCandidate) legacyCandidate = parsed;
         break;
@@ -113,8 +112,8 @@ function parsePngCard(buffer, filePath) {
       }
     }
   }
-  if (legacyCandidate) return { ...normalizeCard(legacyCandidate, filePath), cover: fileCover(filePath, buffer) };
-  return { ...normalizeCard({ name: path.basename(filePath, path.extname(filePath)) }, filePath), cover: fileCover(filePath, buffer) };
+  if (legacyCandidate) return { ...normalizeCard(legacyCandidate, filePath), cover: fileCover(filePath) };
+  return { ...normalizeCard({ name: path.basename(filePath, path.extname(filePath)) }, filePath), cover: fileCover(filePath) };
 }
 
 function tryParseCardPayload(text) {
@@ -139,7 +138,7 @@ function parseWebpCard(buffer, filePath) {
     const parsed = tryParseCardPayload(candidate);
     const data = parsed?.data || parsed;
     if (data?.name || data?.first_mes || data?.description) {
-      return { ...normalizeCard(parsed, filePath), cover: fileCover(filePath, buffer) };
+      return { ...normalizeCard(parsed, filePath), cover: fileCover(filePath) };
     }
   }
 
@@ -152,11 +151,33 @@ function parseWebpCard(buffer, filePath) {
     const parsed = tryParseCardPayload(base64Match[0]);
     const data = parsed?.data || parsed;
     if (data?.name || data?.first_mes || data?.description) {
-      return { ...normalizeCard(parsed, filePath), cover: fileCover(filePath, buffer) };
+      return { ...normalizeCard(parsed, filePath), cover: fileCover(filePath) };
     }
   }
 
-  return { ...normalizeCard({ name: path.basename(filePath, path.extname(filePath)) }, filePath), cover: fileCover(filePath, buffer) };
+  return { ...normalizeCard({ name: path.basename(filePath, path.extname(filePath)) }, filePath), cover: fileCover(filePath) };
+}
+
+function isInside(parent, child) {
+  const resolvedParent = path.resolve(parent);
+  const resolvedChild = path.resolve(child);
+  const normalizedParent = process.platform === "win32" ? resolvedParent.toLowerCase() : resolvedParent;
+  const normalizedChild = process.platform === "win32" ? resolvedChild.toLowerCase() : resolvedChild;
+  return normalizedChild === normalizedParent || normalizedChild.startsWith(normalizedParent + path.sep);
+}
+
+export async function resolveCharacterCover(encoded) {
+  const filePath = Buffer.from(String(encoded || ""), "base64url").toString("utf8");
+  const ext = path.extname(filePath).toLowerCase();
+  if (![".png", ".webp"].includes(ext)) throw new Error("不支持的封面格式。");
+  const cache = await readCache();
+  const root = cache.selectedTavernPath;
+  if (!root) throw new Error("尚未连接 SillyTavern。");
+  const characterDir = path.resolve(root, "characters");
+  const target = path.resolve(filePath);
+  if (!isInside(characterDir, target)) throw new Error("只能读取当前酒馆 characters 目录内的封面。");
+  if (!await fileExists(target)) throw new Error("封面文件不存在。");
+  return target;
 }
 
 export async function parseCharacterFile(filePath) {

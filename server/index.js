@@ -2,7 +2,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scanTaverns, selectTavern } from "./scanner.js";
-import { deleteCharacter, importCharacter, importCharacterBlob, listCharacters, parseCharacterFile, saveCharacterAs } from "./cards.js";
+import { deleteCharacter, importCharacter, importCharacterBlob, listCharacters, parseCharacterFile, resolveCharacterCover, saveCharacterAs } from "./cards.js";
 
 const app = express();
 const port = Number(process.env.PORT || 3829);
@@ -34,6 +34,14 @@ app.post("/api/taverns/select", async (req, res, next) => {
 app.get("/api/characters", async (req, res, next) => {
   try {
     res.json(await listCharacters(req.query.tavernPath));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/characters/cover/:encoded", async (req, res, next) => {
+  try {
+    res.sendFile(await resolveCharacterCover(req.params.encoded));
   } catch (error) {
     next(error);
   }

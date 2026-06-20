@@ -23,8 +23,9 @@ export function selectTavern(path: string) {
   });
 }
 
-export function listCharacters() {
-  return request<CharacterCard[]>("/api/characters");
+export function listCharacters(tavernPath?: string) {
+  const suffix = tavernPath ? `?tavernPath=${encodeURIComponent(tavernPath)}` : "";
+  return request<CharacterCard[]>(`/api/characters${suffix}`);
 }
 
 export function previewCharacter(path: string) {
