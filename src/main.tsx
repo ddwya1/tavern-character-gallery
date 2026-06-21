@@ -20,7 +20,7 @@ import {
 import "./styles/app.css";
 import { stagedDemo, covers } from "./lib/mock";
 import type { CharacterCard, TavernCandidate } from "./lib/types";
-import { deleteCharacter, importCharacter, importCharacterBlob, listCharacters, saveCharacterAs, scanTaverns, selectTavern } from "./lib/api";
+import { deleteCharacter, getCharacterDetail, importCharacter, importCharacterBlob, listCharacters, saveCharacterAs, scanTaverns, selectTavern } from "./lib/api";
 import { organizeCharacter, type OrganizedCharacter, type OrganizedGreeting, type OrganizedRegexRule, type OrganizedWorldEntry } from "./lib/characterOrganizer";
 
 type Tab = "全部角色" | "最近导入" | "收藏夹" | "待导入";
@@ -75,6 +75,7 @@ function App() {
   const [flight, setFlight] = useState<FlightState | null>(null);
   const [status, setStatus] = useState("正在寻找本地酒馆");
   const [toast, setToast] = useState("");
+  const [visibleCount, setVisibleCount] = useState(() => initialVisibleCount());
 
   const selected = selectedId ? characters.find(card => card.id === selectedId) ?? null : null;
 
@@ -108,7 +109,12 @@ function App() {
       return tabHit && (!query || text.includes(query));
     });
   }, [characters, tab, query]);
+  const visibleCards = filtered.slice(0, visibleCount);
   const heroCards = filtered.length ? filtered : characters.length ? characters : pendingImport ? [pendingImport] : [stagedDemo];
+
+  useEffect(() => {
+    setVisibleCount(initialVisibleCount());
+  }, [tab, query, characters.length]);
 
   function notify(message: string) {
     setToast(message);
@@ -117,6 +123,30 @@ function App() {
 
   function updateCard(id: string, patch: Partial<CharacterCard>) {
     setCharacters(list => list.map(card => card.id === id ? { ...card, ...patch } : card));
+  }
+
+  async function loadCharacterDetail(card: CharacterCard) {
+    if (!card.filePath || !card.needsDetail || card.detailLoading) return;
+    updateCard(card.id, { detailLoading: true, detailError: "" });
+    try {
+      const detail = await getCharacterDetail(card.filePath, selectedTavern?.path);
+      updateCard(card.id, {
+        ...detail,
+        id: card.id,
+        cover: detail.cover || card.cover,
+        imported: card.imported,
+        favorite: card.favorite,
+        recent: card.recent,
+        staged: card.staged,
+        detailLoading: false,
+        needsDetail: false
+      });
+    } catch (error) {
+      updateCard(card.id, {
+        detailLoading: false,
+        detailError: error instanceof Error ? error.message : "读取详情失败"
+      });
+    }
   }
 
   function detailCoverTarget() {
@@ -149,6 +179,7 @@ function App() {
       setFlight(null);
       setCardTransition(false);
     }, 860);
+    void loadCharacterDetail(card);
   }
 
   async function handleImportToTavern(card: CharacterCard) {
@@ -199,6 +230,7 @@ function App() {
             onOpen={card => {
               setSelectedId(card.id);
               setActiveModule("overview");
+              void loadCharacterDetail(card);
             }}
           />
           <HeroShowcase cards={heroCards} total={characters.length} pending={characters.filter(card => !card.imported).length} />
@@ -211,8 +243,9 @@ function App() {
 
         <section className="px-4 md:px-7 pb-14">
           {filtered.length ? (
+            <>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-4">
-              {filtered.map((card, index) => (
+              {visibleCards.map((card, index) => (
                 <PosterCard
                   key={card.id}
                   card={card}
@@ -222,6 +255,14 @@ function App() {
                 />
               ))}
             </div>
+            {filtered.length > visibleCards.length && (
+              <div className="mt-6 grid place-items-center">
+                <button className="h-10 px-5 border border-[var(--line)] bg-white/[.04] text-[var(--paper)]" onClick={() => setVisibleCount(count => count + initialVisibleCount())}>
+                  继续显示 {Math.min(36, filtered.length - visibleCards.length)} 张
+                </button>
+              </div>
+            )}
+            </>
           ) : (
             <div className="min-h-[340px] grid place-items-center text-center border border-[var(--line)] bg-white/[.025]">
               <div>
@@ -338,10 +379,16 @@ function Topbar({ status, query, setQuery, openImport, openConnection }: {
 }
 
 function PosterCard({ card, index, onOpen, onFavorite }: { card: CharacterCard; index: number; onOpen: (event: React.MouseEvent<HTMLElement>) => void; onFavorite: () => void }) {
+  const cover = card.cover || covers[index % covers.length];
+  const imageSrc = coverImageSrc(cover);
   return (
     <article onClick={onOpen} className={`breathing-frame poster-shell relative overflow-hidden border bg-[#130d0c] shadow-2xl isolate group aspect-[2/3] min-h-[260px] ${card.staged ? "border-[rgba(244,201,121,.44)]" : "border-white/15"}`}>
       {card.staged && <div className="absolute top-3 left-3 z-10 px-3 py-1 border border-[rgba(244,201,121,.34)] bg-[rgba(244,201,121,.08)] text-[#ffe4a7] text-xs tracking-[.16em]">待导入</div>}
-      <div className="poster-cover absolute inset-0 transition duration-700 group-hover:scale-105" style={coverStyle(card.cover || covers[index % covers.length])} />
+      {imageSrc ? (
+        <img className="poster-cover poster-image absolute inset-0 transition duration-700 group-hover:scale-105" src={imageSrc} alt="" loading="lazy" decoding="async" />
+      ) : (
+        <div className="poster-cover absolute inset-0 transition duration-700 group-hover:scale-105" style={coverStyle(cover)} />
+      )}
       <button onClick={event => { event.stopPropagation(); onFavorite(); }} className={`absolute ${card.staged ? "top-14" : "top-3"} right-3 z-20 w-9 h-9 grid place-items-center border border-white/20 bg-black/25 backdrop-blur text-[#ffd98a]`}>
         {card.favorite ? <Star size={16} fill="currentColor" /> : <Star size={16} />}
       </button>
@@ -355,6 +402,16 @@ function PosterCard({ card, index, onOpen, onFavorite }: { card: CharacterCard; 
       </div>
     </article>
   );
+}
+
+function initialVisibleCount() {
+  if (typeof window === "undefined") return 24;
+  return window.innerWidth < 768 ? 12 : 36;
+}
+
+function coverImageSrc(cover: string) {
+  if (/^data:image\//i.test(cover) || /^https?:\/\//i.test(cover) || cover.startsWith("/")) return cover;
+  return "";
 }
 
 function CoverFlight({ flight }: { flight: FlightState }) {
@@ -612,6 +669,17 @@ function DetailDrawer(props: {
               <button onClick={props.onImport} className="h-10 px-5 border border-[rgba(244,201,121,.42)] text-[#ffe2a5] bg-[rgba(244,201,121,.12)]">{props.card.imported ? "重新导入酒馆" : "导入酒馆"}</button>
             </div>
           </div>
+
+          {props.card.detailLoading && (
+            <div className="mb-5 border border-[rgba(244,201,121,.22)] bg-[rgba(244,201,121,.07)] px-4 py-3 text-sm text-[#ffe2a5]">
+              正在读取这张角色卡的完整信息，封面墙不会被它卡住。
+            </div>
+          )}
+          {props.card.detailError && (
+            <div className="mb-5 border border-[rgba(207,111,103,.34)] bg-[rgba(207,111,103,.08)] px-4 py-3 text-sm text-[#ffc9c9]">
+              {props.card.detailError}
+            </div>
+          )}
 
           {props.activeModule === "overview" && (
             <OverviewPanel card={props.card} organized={props.organized} />

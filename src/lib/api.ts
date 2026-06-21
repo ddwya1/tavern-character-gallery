@@ -35,6 +35,13 @@ export function previewCharacter(path: string) {
   });
 }
 
+export function getCharacterDetail(filePath: string, tavernPath?: string) {
+  return request<CharacterCard>("/api/characters/detail", {
+    method: "POST",
+    body: JSON.stringify({ filePath, tavernPath })
+  });
+}
+
 export function importCharacter(sourcePath: string) {
   return request<CharacterCard>("/api/characters/import", {
     method: "POST",

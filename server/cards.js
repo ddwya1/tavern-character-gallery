@@ -87,6 +87,100 @@ function fileCover(filePath) {
   return `/api/characters/cover/${encodedPath(filePath)}`;
 }
 
+function buildLightCard(filePath, stat = null) {
+  const parsed = path.parse(filePath);
+  return {
+    ...normalizeCard({ name: parsed.name }, filePath),
+    cover: fileCover(filePath),
+    imported: true,
+    needsDetail: true,
+    fileSize: stat?.size ?? null,
+    updatedAt: stat?.mtimeMs ?? null
+  };
+}
+
+function pickLightFields(card, filePath, stat = null) {
+  return {
+    id: Buffer.from(filePath, "utf8").toString("base64url"),
+    filePath,
+    fileName: path.basename(filePath),
+    name: card.name || path.basename(filePath, path.extname(filePath)),
+    avatar: card.avatar || "",
+    tags: Array.isArray(card.tags) ? card.tags.slice(0, 8) : [],
+    creator: card.creator || "",
+    character_version: card.character_version || "",
+    cover: fileCover(filePath),
+    imported: true,
+    needsDetail: true,
+    fileSize: stat?.size ?? null,
+    updatedAt: stat?.mtimeMs ?? null
+  };
+}
+
+function lightFromPayload(payload, filePath, stat) {
+  const parsed = tryParseCardPayload(payload);
+  if (!parsed) return null;
+  return pickLightFields(normalizeCard(parsed, filePath), filePath, stat);
+}
+
+async function parsePngLightCard(filePath, stat) {
+  const handle = await fs.open(filePath, "r");
+  try {
+    const header = Buffer.alloc(8);
+    await handle.read(header, 0, 8, 0);
+    if (header.toString("hex") !== "89504e470d0a1a0a") return null;
+    let position = 8;
+    let inspected = 0;
+    while (position + 8 < stat.size && inspected < 6 * 1024 * 1024) {
+      const chunkHeader = Buffer.alloc(8);
+      await handle.read(chunkHeader, 0, 8, position);
+      const length = chunkHeader.readUInt32BE(0);
+      const type = chunkHeader.toString("ascii", 4, 8);
+      position += 8;
+      if (length < 0 || length > 8 * 1024 * 1024) break;
+      if (type === "IDAT") break;
+      if (["tEXt", "iTXt", "zTXt"].includes(type)) {
+        const chunk = Buffer.alloc(length);
+        await handle.read(chunk, 0, length, position);
+        inspected += length;
+        if (type === "tEXt") {
+          const decoded = textChunk.decode(chunk);
+          if (["chara", "ccv3", "data"].includes(decoded.keyword)) {
+            const card = lightFromPayload(decoded.text.trim(), filePath, stat);
+            if (card) return card;
+          }
+        } else {
+          const text = chunk.toString("utf8");
+          const marker = ["chara", "ccv3", "data"].find(item => text.includes(item));
+          if (marker) {
+            const payload = text.slice(text.indexOf(marker) + marker.length).replace(/^[\0\s]+/, "");
+            const card = lightFromPayload(payload, filePath, stat);
+            if (card) return card;
+          }
+        }
+      }
+      position += length + 4;
+    }
+    return null;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function parseLightCard(filePath, stat) {
+  const ext = path.extname(filePath).toLowerCase();
+  try {
+    if (ext === ".json") {
+      const parsed = JSON.parse(await fs.readFile(filePath, "utf8"));
+      return pickLightFields(normalizeCard(parsed, filePath), filePath, stat);
+    }
+    if (ext === ".png") return await parsePngLightCard(filePath, stat) || buildLightCard(filePath, stat);
+    return buildLightCard(filePath, stat);
+  } catch {
+    return buildLightCard(filePath, stat);
+  }
+}
+
 function parsePngCard(buffer, filePath) {
   const chunks = extractChunks(buffer);
   let legacyCandidate = null;
@@ -189,21 +283,40 @@ export async function parseCharacterFile(filePath) {
   throw new Error("暂不支持该角色卡格式。");
 }
 
+export async function parseCharacterDetail(filePath, tavernPath) {
+  const cache = await readCache();
+  const root = tavernPath || cache.selectedTavernPath;
+  if (!root) throw new Error("尚未连接 SillyTavern。");
+  const characterDir = path.resolve(root, "characters");
+  const target = path.resolve(filePath || "");
+  if (!isInside(characterDir, target)) throw new Error("只能读取当前酒馆 characters 目录内的角色卡。");
+  if (!await fileExists(target)) throw new Error("角色卡文件不存在。");
+  return { ...await parseCharacterFile(target), needsDetail: false };
+}
+
 export async function listCharacters(tavernPath) {
   const cache = await readCache();
   const root = tavernPath || cache.selectedTavernPath;
   if (!root) return [];
   const charactersDir = path.join(root, "characters");
   if (!await fileExists(charactersDir)) return [];
-  const files = await fs.readdir(charactersDir);
-  const cards = [];
-  for (const file of files.filter(name => /\.(png|json|webp)$/i.test(name))) {
+  const entries = await fs.readdir(charactersDir, { withFileTypes: true });
+  const files = entries
+    .filter(entry => entry.isFile() && /\.(png|json|webp)$/i.test(entry.name))
+    .map(entry => entry.name)
+    .sort((a, b) => a.localeCompare(b, "zh-Hans-CN", { numeric: true }));
+  const cards = await Promise.all(files.map(async file => {
+    const target = path.join(charactersDir, file);
     try {
-      cards.push(await parseCharacterFile(path.join(charactersDir, file)));
+      const stat = await fs.stat(target);
+      return parseLightCard(target, stat);
     } catch (error) {
-      cards.push(normalizeCard({ name: path.basename(file, path.extname(file)), parseError: error.message }, path.join(charactersDir, file)));
+      return {
+        ...buildLightCard(target),
+        parseError: error.message
+      };
     }
-  }
+  }));
   return cards;
 }
 

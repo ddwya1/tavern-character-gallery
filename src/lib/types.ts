@@ -34,6 +34,11 @@ export interface CharacterCard {
   imported?: boolean;
   staged?: boolean;
   recent?: string;
+  needsDetail?: boolean;
+  detailLoading?: boolean;
+  detailError?: string;
+  fileSize?: number | null;
+  updatedAt?: number | null;
 }
 
 export interface TavernCandidate {
